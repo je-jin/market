@@ -12,6 +12,7 @@ GitHub Actions에서 매일 실행된다.
   MAIL_PASSWORD  (선택) Gmail 앱 비밀번호
   MAIL_TO        (선택) 받는 주소 (없으면 MAIL_USER)
   OUR_KEYWORDS   (선택) 우리 회사 조합을 찾는 키워드, 쉼표 구분 (메일에만 사용)
+  SITE_URL       (선택) 페이지 주소 (메일 하단 링크용)
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ KST = timezone(timedelta(hours=9))
 API = "https://opendart.fss.or.kr/api"
 ROOT = Path(__file__).parent
 DATA_FILE = ROOT / "data" / "deals.json"
+DATA_VERSION = 2  # 파서가 바뀌면 올림 → 다음 실행 때 처음부터 다시 수집
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 
 KINDS = {
@@ -157,11 +159,11 @@ def months_between(a: str | None, b: str | None) -> float | None:
 def doc_tables(html: str) -> tuple[str, list[list[list[str]]]]:
     soup = BeautifulSoup(html, "lxml")
     tables = []
-    for t in soup.find_all(["table", "TABLE"]):
+    for t in soup.find_all("table"):
         rows = []
-        for tr in t.find_all(["tr", "TR"]):
+        for tr in t.find_all("tr"):
             cells = [re.sub(r"\s+", " ", c.get_text(" ", strip=True))
-                     for c in tr.find_all(["td", "th", "TD", "TH", "TE", "TU"])]
+                     for c in tr.find_all(["td", "th", "te", "tu"])]
             if cells:
                 rows.append(cells)
         tables.append(rows)
@@ -211,40 +213,69 @@ def none_stated(chunk: str) -> bool:
     return bool(re.search(r"해당\s*사항\s*(이\s*)?없|해당없음|미부여", chunk[:160]))
 
 
+def period_months(w: str, pay_date: str | None) -> int | None:
+    """'발행일로부터 2년 6개월' → 30, '발행일로부터 18개월' → 18, '2년' → 24, 날짜 → 납입일과의 차이."""
+    m = re.search(r"발행일\s*(?:로부터|부터|이후)\s*(?:(\d{1,2})\s*년)?\s*(?:(\d{1,3})\s*개월)?", w)
+    if m and (m.group(1) or m.group(2)):
+        return int(m.group(1) or 0) * 12 + int(m.group(2) or 0)
+    m = re.search(r"(?:(\d{1,2})\s*년\s*)?(\d{1,3})\s*개월|(\d{1,2})\s*년\s*(?:이|이\s*되는|경과)", w)
+    if m:
+        if m.group(3):
+            return int(m.group(3)) * 12
+        return int(m.group(1) or 0) * 12 + int(m.group(2))
+    d = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", w)
+    if d and pay_date and ymd(d.group()) and ymd(d.group()) > pay_date:
+        return round(months_between(pay_date, ymd(d.group())))
+    return None
+
+
+def find_ytc(chunks: list[str]) -> float | None:
+    """콜옵션 매매대금 수익률. '수익률' 가까이 있는 '연 X%'를 우선, 지연배상 이율은 제외."""
+    best = None
+    for w in chunks:
+        for m in re.finditer(r"연\s*(?:복리|단리)?\s*(\d{1,2}(?:\.\d+)?)\s*%", w):
+            before, after = w[max(0, m.start() - 40): m.start()], w[m.end(): m.end() + 30]
+            if re.search(r"지연|연체|배상", before + after):
+                continue
+            v = float(m.group(1))
+            if "수익률" in before[-25:]:
+                return v
+            if best is None:
+                best = v
+    return best
+
+
 def parse_options(text: str, pay_date: str | None) -> dict:
     """원문 서술에서 Put/Call을 규칙으로 추정. (정확하지 않을 수 있음 → 페이지에 추정값으로 표시)
-    본문 9-1항은 '23. 기타 투자판단에 참고할 사항 참조'처럼 안내만 있는 경우가 많아
-    모든 등장 위치를 보고 숫자가 들어 있는 조각을 우선한다."""
+    9-1항 요약과 '23. 기타 투자판단에 참고할 사항'의 상세가 모두 있으므로 모든 등장 위치를 본다."""
     o = {"put": None, "put_start_m": None, "call": None, "call_pct": None, "call_ytc": None}
 
     puts = windows(text, PUT_PAT, CALL_PAT, 1500)
+    if text and not puts:
+        o["put"] = False
     if puts:
         o["put"] = any(not none_stated(w) for w in puts)
         for w in puts:
-            if none_stated(w):
-                continue
-            m = re.search(r"(\d{1,3})\s*개월", w)
-            if m:
-                o["put_start_m"] = int(m.group(1))
-                break
-            d = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", w)
-            if d and pay_date and ymd(d.group()) and ymd(d.group()) > pay_date:
-                o["put_start_m"] = round(months_between(pay_date, ymd(d.group())))
+            if not none_stated(w) and (v := period_months(w, pay_date)) is not None:
+                o["put_start_m"] = v
                 break
 
-    calls = windows(text, CALL_PAT, PUT_PAT, 2000)
+    calls = windows(text, CALL_PAT, PUT_PAT, 4000)
+    if text and not calls:
+        o["call"] = False
     if calls:
-        o["call"] = any(not none_stated(w) for w in calls)
-        for w in calls:
-            if none_stated(w):
-                continue
-            m = re.search(r"(?:권면|전자등록|발행)\s*(?:총액|금액|총금액)?[^%]{0,60}?(\d{1,3}(?:\.\d+)?)\s*%", w)
+        live = [w for w in calls if not none_stated(w)]
+        o["call"] = bool(live)
+        for w in live:
+            N = r"(?<![\d,.])(\d{1,3}(?:\.\d+)?)\s*%"
+            m = re.search(r"(?:권면|전자등록|발행)\s*(?:총액|금액|총금액|가액)\s*의?\s*" + N, w) or \
+                re.search(r"(?:Call\s*option|콜\s*옵션|매도청구권)\s*\(?\s*" + N, w, re.I) or \
+                re.search(r"취득\s*규모[^%]{0,60}?" + N, w) or \
+                re.search(r"(?:권면|전자등록)\s*(?:총액|금액|총금액)?[^%]{0,60}?" + N, w)
             if m and 0 < float(m.group(1)) <= 100:
                 o["call_pct"] = float(m.group(1))
-                y = re.search(r"연\s*(?:복리|단리)?\s*(\d{1,2}(?:\.\d+)?)\s*%", w)
-                if y:
-                    o["call_ytc"] = float(y.group(1))
                 break
+        o["call_ytc"] = find_ytc(live)
     return o
 
 
@@ -371,7 +402,7 @@ def send_mail(new: list[dict], all_deals: list[dict]):
     to = os.getenv("MAIL_TO") or user
     rules = CONFIG["flag_rules"]
     ours = [k.strip() for k in os.getenv("OUR_KEYWORDS", "").split(",") if k.strip()]
-    site = CONFIG.get("site_url", "")
+    site = os.getenv("SITE_URL", "")
 
     def line(d):
         inv = ", ".join(i["name"] for i in d["investors"][:3]) + (f" 외 {len(d['investors'])-3}" if len(d["investors"]) > 3 else "")
@@ -385,7 +416,7 @@ def send_mail(new: list[dict], all_deals: list[dict]):
                 f"  https://dart.fss.or.kr/dsaf001/main.do?rcpNo={d['rcept_no']}")
 
     body = f"새 메자닌 발행결정 {len(new)}건\n\n" + "\n\n".join(line(d) for d in new)
-    body += f"\n\n전체 현황: {site}\n(Put·Call 값은 원문에서 자동 추정한 값이라 틀릴 수 있습니다)"
+    body += (f"\n\n전체 현황: {site}" if site else "") + "\n\n(Put·Call 값은 원문에서 자동 추정한 값이라 틀릴 수 있습니다)"
     msg = MIMEText(body, _charset="utf-8")
     msg["Subject"] = f"[메자닌] {datetime.now(KST):%m/%d} 신규 {len(new)}건"
     msg["From"], msg["To"] = user, to
@@ -402,7 +433,10 @@ def main():
         sys.exit("DART_API_KEY 가 없습니다 (GitHub Secrets 확인)")
     dart = Dart(key)
 
-    store = json.loads(DATA_FILE.read_text(encoding="utf-8")) if DATA_FILE.exists() else {"deals": {}, "seen": []}
+    store = json.loads(DATA_FILE.read_text(encoding="utf-8")) if DATA_FILE.exists() else {}
+    if store.get("version") != DATA_VERSION:
+        print("데이터 형식이 바뀌어 처음부터 다시 수집합니다")
+        store = {"deals": {}, "seen": []}
     deals: dict = store["deals"]
     seen = set(store["seen"])
 
@@ -430,9 +464,6 @@ def main():
         if not d:
             continue
         old = deals.get(d["key"])
-        if old and "정정" not in rep["report_nm"]:  # 정정이 아닌데 키가 겹치면 별개 건으로
-            d["key"] += "-" + rep["rcept_no"]
-            old = None
         if old:  # 정정공시 → 최신 조건으로 덮되 최초 공시일·정정횟수 유지
             d["first_dt"] = old["first_dt"]
             d["corrections"] = old.get("corrections", 0) + 1
@@ -441,7 +472,7 @@ def main():
         deals[d["key"]] = d
         print(f"  {'정정' if old else '신규'} {d['corp']} {kind} {d['round']}회 {d['amount_eok']}억 인수인 {len(d['investors'])}")
 
-    store = {"updated": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "deals": deals, "seen": sorted(seen)}
+    store = {"version": DATA_VERSION, "updated": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "deals": deals, "seen": sorted(seen)}
     DATA_FILE.parent.mkdir(exist_ok=True)
     DATA_FILE.write_text(json.dumps(store, ensure_ascii=False, indent=0), encoding="utf-8")
     print(f"저장 {len(deals)}건, DART 호출 {dart.calls}회")

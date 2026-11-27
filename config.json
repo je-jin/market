@@ -1,7 +1,6 @@
 {
   "start_date": "2026-01-01",
   "lookback_days": 10,
-  "site_url": "",
   "flag_rules": {
     "call_pct_min": 50,
     "ytm_min": 2,
