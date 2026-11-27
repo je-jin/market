@@ -6,10 +6,5 @@
     "ytm_min": 2,
     "put_start_max_m": 24
   },
-  "group_aliases": {
-    "한국투자": ["한국투자", "한투"],
-    "NH": ["엔에이치", "NH"],
-    "IBK": ["아이비케이", "IBK"],
-    "KB": ["케이비", "KB"]
-  }
+  "group_aliases": {}
 }

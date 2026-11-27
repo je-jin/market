@@ -36,7 +36,7 @@ KST = timezone(timedelta(hours=9))
 API = "https://opendart.fss.or.kr/api"
 ROOT = Path(__file__).parent
 DATA_FILE = ROOT / "data" / "deals.json"
-DATA_VERSION = 2  # 파서가 바뀌면 올림 → 다음 실행 때 처음부터 다시 수집
+DATA_VERSION = 3  # 파서가 바뀌면 올림 → 다음 실행 때 처음부터 다시 수집
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 
 KINDS = {
@@ -195,6 +195,55 @@ def investors_from_tables(tables) -> list[str]:
     return out
 
 
+def fund_map_from_tables(tables) -> dict[str, tuple[str, str]]:
+    """'구분 | 집합투자기구 | 집합투자업자 | 신탁업자' 표 → {'1': (펀드명, 운용사)}"""
+    out = {}
+    for rows in tables:
+        hdr = next((i for i, r in enumerate(rows) if any("집합투자기구" in c.replace(" ", "") for c in r)), None)
+        if hdr is None:
+            continue
+        h = [c.replace(" ", "") for c in rows[hdr]]
+        fi = next(j for j, c in enumerate(h) if "집합투자기구" in c)
+        mi = next((j for j, c in enumerate(h) if "집합투자업자" in c or "운용" in c), None)
+        for r in rows[hdr + 1:]:
+            m = re.search(r"펀드\s*(\d+)", " ".join(r[:max(fi, 1)]))
+            if m and fi < len(r):
+                out[m.group(1)] = (r[fi].strip(), r[mi].strip() if mi is not None and mi < len(r) else "")
+    return out
+
+
+TRUST = re.compile(r"\(?\s*(?:본건\s*)?펀드\s*([\d,\s및]+)\s*의?\s*신탁업자[^)]*\)?")
+
+
+def resolve_investors(names: list[str], fmap: dict) -> list[dict]:
+    """신탁업자 명의 인수인을 실제 펀드·운용사로 바꾼다."""
+    out = []
+    for n in names:
+        m = TRUST.search(n)
+        if m:
+            trustee = n[: m.start()].strip()
+            nums = re.findall(r"\d+", m.group(1))
+            hits = [fmap[k] for k in nums if k in fmap]
+            if hits:
+                for fund, mgr in hits:
+                    out.append({"name": fund, "type": investor_type(fund + " " + mgr), "group": investor_group(mgr or fund),
+                                "via": trustee})
+                continue
+            out.append({"name": n, "type": "자산운용", "group": "신탁(운용사 미확인)", "via": trustee})
+            continue
+        if "신탁업자" in n or "특정금전신탁" in n:
+            out.append({"name": n, "type": "자산운용", "group": "신탁(운용사 미확인)", "via": n.split("(")[0].strip()})
+            continue
+        out.append({"name": n, "type": investor_type(n), "group": investor_group(n)})
+    # 같은 펀드가 두 번 나오면 하나로
+    seen, uniq = set(), []
+    for i in out:
+        if i["name"] not in seen:
+            seen.add(i["name"])
+            uniq.append(i)
+    return uniq
+
+
 PUT_PAT = r"조기\s*상환\s*청구권|Put\s*Option"
 CALL_PAT = r"매도\s*청구권|Call\s*Option"
 
@@ -284,6 +333,8 @@ def investor_type(name: str) -> str:
     n = name.replace(" ", "")
     if "신기술" in n:
         return "신기술조합"
+    if re.search(r"투자신탁|집합투자|헤지", n):
+        return "자산운용"
     if re.search(r"벤처|창업|투자조합|VC", n):
         return "VC펀드"
     if re.search(r"사모투자|PEF|합자회사", n):
@@ -335,7 +386,7 @@ def build_deal(dart: Dart, rep: dict, kind: str) -> dict | None:
 
     html = dart.document_text(rep["rcept_no"])
     text, tables = doc_tables(html) if html else ("", [])
-    invs = investors_from_tables(tables)
+    invs = resolve_investors(investors_from_tables(tables), fund_map_from_tables(tables))
     opts = parse_options(text, pay)
 
     refix_floor = round(floor / price * 100, 1) if floor and price and floor < price else None
@@ -363,7 +414,7 @@ def build_deal(dart: Dart, rep: dict, kind: str) -> dict | None:
         "pay_date": pay,
         "use": use,
         "method": row.get("bdis_mthn"),
-        "investors": [{"name": n, "type": investor_type(n), "group": investor_group(n)} for n in invs],
+        "investors": invs,
         **opts,
         "est": ["put", "put_start_m", "call", "call_pct", "call_ytc"],
         "corrections": 0,
