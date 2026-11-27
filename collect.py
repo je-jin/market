@@ -219,11 +219,19 @@ def norm_key(n: str) -> str:
     return re.sub(r"[\s\-·_()（）\[\]㈜]|주식회사", "", n)
 
 
+LATIN = {"IBK": "아이비케이", "KDB": "케이디비", "JB": "제이비", "NH": "엔에이치", "KB": "케이비",
+         "DB": "디비", "SK": "에스케이", "BNK": "비엔케이", "DGB": "디지비", "LS": "엘에스", "KTB": "케이티비"}
+
+
 def clean_gp(n: str) -> str:
-    """'케이비증권㈜' → '케이비증권', '주식회사 엔엑스브이피' → '엔엑스브이피'."""
+    """'케이비증권㈜' → '케이비증권', '주식회사 엔엑스브이피' → '엔엑스브이피', 'JB우리캐피탈' → '제이비우리캐피탈'."""
     n = re.sub(r"\(.*?\)|（.*?）", "", n)
     n = re.sub(r"㈜|\(주\)|주식회사|유한책임회사|유한회사", "", n)
-    return re.sub(r"\s+", " ", n).strip(" ,·")
+    n = re.sub(r"\s+", " ", n).strip(" ,·")
+    m = re.match(r"^([A-Z]{2,3})\s*(?=[가-힣])", n)
+    if m and m.group(1) in LATIN:
+        n = LATIN[m.group(1)] + n[m.end():]
+    return n
 
 
 def gp_map_from_tables(tables) -> dict[str, list[str]]:
@@ -541,6 +549,28 @@ def send_mail(new: list[dict], all_deals: list[dict]):
 
 
 # ───────────────────────── 메인 ─────────────────────────
+def propagate_gps(deals: dict) -> int:
+    """어떤 조합이 한 공시에서는 업무집행조합원 표가 있고 다른 공시에서는 없을 때,
+    표가 있던 공시의 운용사를 이름으로만 추정한 건에도 채운다."""
+    known: dict[str, list[str]] = {}
+    for d in deals.values():          # 예전에 저장된 이름도 같은 규칙으로 정리
+        for i in d["investors"]:
+            if i.get("gp_src") in ("공시", "펀드표", "다른 공시", "본인"):
+                i["gps"] = list(dict.fromkeys(clean_gp(g) for g in i["gps"]))
+                i["group"] = " · ".join(i["gps"])
+    for d in deals.values():
+        for i in d["investors"]:
+            if i.get("gp_src") in ("공시", "펀드표"):
+                known.setdefault(norm_key(i["name"]), i["gps"])
+    fixed = 0
+    for d in deals.values():
+        for i in d["investors"]:
+            if i.get("gp_src") == "이름" and (k := match_key(i["name"], known)):
+                i["gps"], i["group"], i["gp_src"] = known[k], " · ".join(known[k]), "다른 공시"
+                fixed += 1
+    return fixed
+
+
 def save(store: dict, deals: dict, seen: set, backfill_done: bool):
     store.update({"version": DATA_VERSION, "updated": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
                   "backfill_done": backfill_done, "deals": deals, "seen": sorted(seen)})
@@ -597,6 +627,7 @@ def main():
             save(store, deals, seen, backfill_done)  # 구간마다 저장 → 중간에 끊겨도 여기까지는 남는다
         backfill_done = True
     finally:
+        print(f"다른 공시 정보로 운용사 보완 {propagate_gps(deals)}건")
         save(store, deals, seen, backfill_done)
         print(f"저장 {len(deals)}건, 실패 {failed}건, DART 호출 {dart.calls}회, 전체 수집 {'완료' if backfill_done else '미완료(다음 실행 때 이어서)'}")
 
