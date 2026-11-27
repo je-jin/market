@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>메자닌 모니터</title>
+<style>
+  :root{
+    --bg:#f6f5f2; --card:#fff; --ink:#1d1d1b; --sub:#6b6a66; --line:#e4e2dc;
+    --accent:#1f5f8b; --accent-soft:#e6eff6; --warn:#b4471f; --warn-soft:#fbebe4;
+    --ours:#6a4fb3; --ours-soft:#efeafa; --ok:#2f7a4f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#161615; --card:#1f1f1d; --ink:#ecebe7; --sub:#9c9a94; --line:#33322f;
+      --accent:#7db3db; --accent-soft:#1d2c38; --warn:#f08a63; --warn-soft:#3a2219;
+      --ours:#b49cf0; --ours-soft:#2a2340; --ok:#6cc792; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 "Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+    font-variant-numeric:tabular-nums}
+  header{padding:22px 28px 10px}
+  h1{margin:0;font-size:21px;letter-spacing:-.3px}
+  .meta{color:var(--sub);font-size:12.5px;margin-top:3px}
+  nav{display:flex;gap:2px;padding:0 28px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+  nav button{border:0;background:none;padding:10px 14px;font:inherit;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+  nav button.on{color:var(--ink);border-color:var(--ink);font-weight:600}
+  main{padding:18px 28px 60px;max-width:1500px}
+  section{display:none} section.on{display:block}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .card .k{font-size:12px;color:var(--sub)} .card .v{font-size:22px;font-weight:650;margin-top:2px}
+  .card .s{font-size:12px;color:var(--sub)}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:16px}
+  .panel h2{font-size:15px;margin:0 0 10px}
+  .note{font-size:12px;color:var(--sub)}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+  .chip{border:1px solid var(--line);background:var(--card);border-radius:99px;padding:4px 11px;cursor:pointer;font:inherit;font-size:13px;color:var(--ink)}
+  .chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  .sep{width:1px;height:20px;background:var(--line);margin:0 4px}
+  input[type=text],input[type=number]{font:inherit;border:1px solid var(--line);border-radius:7px;padding:5px 9px;background:var(--card);color:var(--ink)}
+  .tw{overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:10px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+  th{position:sticky;top:0;background:var(--card);font-weight:600;color:var(--sub);cursor:pointer;font-size:12.5px}
+  td.n,th.n{text-align:right}
+  td.inv{white-space:normal;min-width:220px;max-width:340px;font-size:12.5px}
+  tr.ours td{background:var(--ours-soft)}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;margin:1px 2px 1px 0}
+  .t-warn{background:var(--warn-soft);color:var(--warn)}
+  .t-ours{background:var(--ours);color:#fff}
+  .t-type{background:var(--accent-soft);color:var(--accent)}
+  .est{color:var(--sub);font-style:italic}
+  .hbar{height:8px;background:var(--accent);border-radius:4px;display:inline-block;vertical-align:middle;margin-right:6px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr} main,header,nav{padding-left:14px;padding-right:14px}}
+  .cmp td.better{color:var(--ok);font-weight:600} .cmp td.worse{color:var(--warn);font-weight:600}
+  label.row{display:flex;gap:10px;align-items:center;margin:8px 0}
+  label.row span{min-width:190px}
+  .empty{padding:30px;text-align:center;color:var(--sub)}
+</style>
+</head>
+<body>
+<header>
+  <h1>메자닌 모니터</h1>
+  <div class="meta" id="meta">불러오는 중…</div>
+</header>
+<nav id="nav">
+  <button data-t="sum" class="on">요약</button>
+  <button data-t="list">발행 목록</button>
+  <button data-t="rank">인수인 랭킹</button>
+  <button data-t="ours">우리 회사 비교</button>
+  <button data-t="set">설정</button>
+</nav>
+<main>
+  <section id="sum" class="on"></section>
+  <section id="list">
+    <div class="bar" id="f-kind"></div>
+    <div class="bar" id="f-period"></div>
+    <div class="bar">
+      <button class="chip" id="f-vc">신기술·VC 참여 건만</button>
+      <button class="chip" id="f-flag">불리 조건 있는 건만</button>
+      <button class="chip" id="f-ours">우리 회사 참여 건만</button>
+      <span class="sep"></span>
+      <input type="text" id="f-q" placeholder="회사·인수인 검색" size="18">
+      <span class="note" id="f-count"></span>
+    </div>
+    <div class="tw"><table id="t-list"></table></div>
+    <p class="note">회색 기울임 = 원문 서술에서 자동 추정한 값(틀릴 수 있음). 회사명을 누르면 DART 원문. 머리글을 누르면 정렬.</p>
+  </section>
+  <section id="rank">
+    <div class="bar" id="r-period"></div>
+    <div class="bar" id="r-type"></div>
+    <div class="grid2">
+      <div class="panel"><h2>운용사·그룹별</h2><div class="tw"><table id="t-rank"></table></div>
+        <p class="note">펀드명 앞머리로 묶었습니다. 이름이 다르게 묶이면 설정에서 별칭을 추가하세요.</p></div>
+      <div class="panel"><h2 id="co-title">함께 들어간 곳</h2><div id="co"></div></div>
+    </div>
+  </section>
+  <section id="ours"></section>
+  <section id="set">
+    <div class="panel">
+      <h2>우리 회사</h2>
+      <label class="row"><span>조합·펀드명 키워드 (쉼표 구분)</span><input type="text" id="s-ours" size="40" placeholder="예: OO 신기술, OO벤처"></label>
+      <p class="note">이 키워드는 이 브라우저에만 저장되고 페이지·저장소에는 올라가지 않습니다.</p>
+    </div>
+    <div class="panel">
+      <h2>불리 조건 기준</h2>
+      <label class="row"><span>Call 비율이 이 값 이상</span><input type="number" id="s-call" step="5" style="width:80px"> %</label>
+      <label class="row"><span>만기이자율(YTM)이 이 값 미만</span><input type="number" id="s-ytm" step="0.5" style="width:80px"> %</label>
+      <label class="row"><span>Put 시작이 이 값 초과</span><input type="number" id="s-put" step="3" style="width:80px"> 개월</label>
+      <label class="row"><span>리픽싱 없음 표시 (CB·BW)</span><input type="checkbox" id="s-refix"></label>
+      <label class="row"><span>할증 발행 표시</span><input type="checkbox" id="s-prem"></label>
+    </div>
+    <div class="panel">
+      <h2>인수인 묶음 별칭</h2>
+      <p class="note">한 줄에 하나씩 <b>표시이름: 키워드1, 키워드2</b> 형식. 예) 한국투자: 한국투자, 한투</p>
+      <textarea id="s-alias" rows="5" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:7px;padding:8px;background:var(--card);color:var(--ink)"></textarea>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = (v, d=0) => v==null||isNaN(v) ? '-' : Number(v).toLocaleString('ko-KR',{maximumFractionDigits:d});
+const med = a => { a=a.filter(x=>x!=null&&!isNaN(x)).sort((x,y)=>x-y); if(!a.length) return null;
+  const m=a.length>>1; return a.length%2?a[m]:(a[m-1]+a[m])/2; };
+const pct = (n,d) => d? Math.round(n/d*100)+'%' : '-';
+const store = { get(k,d){ try{const v=localStorage.getItem('mezz.'+k); return v==null?d:JSON.parse(v);}catch(e){return d;} },
+                set(k,v){ try{localStorage.setItem('mezz.'+k,JSON.stringify(v));}catch(e){} } };
+
+let S = Object.assign({ ours:'', call:50, ytm:2, put:24, refix:true, prem:false, alias:'' }, store.get('settings',{}));
+let DEALS = [], UPDATED = '';
+let LF = { kind:'전체', period:'최근 90일', vc:false, flag:false, ours:false, q:'', sort:'first_dt', dir:-1 };
+let RF = { period:'2026 누적', type:'신기술·VC', sel:null };
+
+const VC_TYPES = new Set(['신기술조합','VC펀드']);
+const oursKw = () => S.ours.split(',').map(s=>s.trim()).filter(Boolean);
+const isOurs = d => { const k=oursKw(); return k.length && d.investors.some(i=>k.some(w=>i.name.includes(w))); };
+const aliasMap = () => S.alias.split('\n').map(l=>l.split(':')).filter(p=>p.length==2)
+  .map(([a,b])=>[a.trim(), b.split(',').map(s=>s.trim()).filter(Boolean)]);
+const groupOf = i => { for(const [a,ks] of aliasMap()) if(ks.some(k=>i.name.includes(k))) return a; return i.group; };
+
+function flagsOf(d){
+  const f=[];
+  if(d.call_pct!=null && d.call_pct>=S.call) f.push('Call '+d.call_pct+'%');
+  if(S.refix && d.kind!=='EB' && d.refix_floor==null) f.push('리픽싱 없음');
+  if(d.ytm!=null && d.ytm<S.ytm) f.push('YTM '+d.ytm+'%');
+  if(d.put_start_m && d.put_start_m>S.put) f.push('Put '+d.put_start_m+'M~');
+  if(S.prem && d.premium>0) f.push('할증 '+d.premium+'%');
+  if(d.tenor_y>=30) f.push('영구채형');
+  return f;
+}
+
+function inPeriod(d, p){
+  const today = new Date(UPDATED.slice(0,10) || Date.now());
+  const days = (today - new Date(d.first_dt))/864e5;
+  if(p==='최근 30일') return days<=30;
+  if(p==='최근 90일') return days<=90;
+  if(p==='2026 누적'||p==='전체') return true;
+  return d.first_dt.startsWith(p);
+}
+
+function chips(el, opts, cur, on){
+  el.innerHTML = opts.map(o=>`<button class="chip ${o===cur?'on':''}">${o}</button>`).join('');
+  el.querySelectorAll('button').forEach(b=>b.onclick=()=>on(b.textContent));
+}
+
+/* ── 요약 ── */
+function stats(arr){
+  const n=arr.length, nonEB=arr.filter(d=>d.kind!=='EB');
+  const vc=arr.filter(d=>d.investors.some(i=>VC_TYPES.has(i.type)));
+  return {
+    n, amt: arr.reduce((s,d)=>s+(d.amount_eok||0),0), medAmt: med(arr.map(d=>d.amount_eok)),
+    kinds: ['CB','BW','EB'].map(k=>arr.filter(d=>d.kind===k).length).join(' / '),
+    ytm: med(arr.map(d=>d.ytm)), zero: arr.filter(d=>d.coupon===0&&d.ytm===0).length,
+    refix: nonEB.filter(d=>d.refix_floor!=null).length, nonEB: nonEB.length,
+    refixMed: med(arr.map(d=>d.refix_floor)),
+    call: arr.filter(d=>d.call).length, callMed: med(arr.map(d=>d.call_pct)),
+    put: arr.filter(d=>d.put).length, putMed: med(arr.map(d=>d.put_start_m)),
+    vc: vc.length, flagged: arr.filter(d=>flagsOf(d).length).length, ours: arr.filter(isOurs).length,
+  };
+}
+function renderSum(){
+  const P=['2026 누적','최근 90일','최근 30일'], st=P.map(p=>stats(DEALS.filter(d=>inPeriod(d,p))));
+  const c=st[2];
+  const rows=[
+    ['발행결정', s=>fmt(s.n)+'건'], ['발행금액 합계', s=>fmt(s.amt)+'억'], ['건당 금액 중앙값', s=>fmt(s.medAmt)+'억'],
+    ['CB / BW / EB', s=>s.kinds], ['신기술·VC 참여', s=>`${pct(s.vc,s.n)} (${s.vc}/${s.n})`],
+    ['만기이자율 중앙값', s=>fmt(s.ytm,2)+'%'], ['제로금리(0/0)', s=>`${pct(s.zero,s.n)} (${s.zero}/${s.n})`],
+    ['리픽싱 있음 (CB·BW)', s=>`${pct(s.refix,s.nonEB)} (${s.refix}/${s.nonEB})`], ['리픽싱 하한 중앙값', s=>fmt(s.refixMed,1)+'%'],
+    ['Call 있음 *', s=>`${pct(s.call,s.n)} (${s.call}/${s.n})`], ['Call 비율 중앙값 *', s=>fmt(s.callMed,1)+'%'],
+    ['Put 있음 *', s=>`${pct(s.put,s.n)} (${s.put}/${s.n})`], ['Put 시작 중앙값 *', s=>fmt(s.putMed)+'개월'],
+    ['불리 조건 있음', s=>`${pct(s.flagged,s.n)} (${s.flagged}/${s.n})`],
+  ];
+  $('#sum').innerHTML = `
+    <div class="cards">
+      <div class="card"><div class="k">최근 30일 발행</div><div class="v">${fmt(c.n)}건</div><div class="s">${fmt(c.amt)}억</div></div>
+      <div class="card"><div class="k">최근 30일 신기술·VC 참여</div><div class="v">${fmt(c.vc)}건</div><div class="s">${pct(c.vc,c.n)}</div></div>
+      <div class="card"><div class="k">최근 30일 불리 조건</div><div class="v">${fmt(c.flagged)}건</div><div class="s">설정 기준</div></div>
+      <div class="card"><div class="k">우리 회사 참여 (누적)</div><div class="v">${oursKw().length?fmt(st[0].ours)+'건':'—'}</div><div class="s">${oursKw().length?'':'설정에서 키워드 입력'}</div></div>
+    </div>
+    <div class="panel"><h2>한눈에</h2><div class="tw"><table>
+      <tr><th>구분</th>${P.map(p=>`<th class="n">${p}</th>`).join('')}</tr>
+      ${rows.map(([k,f])=>`<tr><td>${k}</td>${st.map(s=>`<td class="n">${f(s)}</td>`).join('')}</tr>`).join('')}
+    </table></div><p class="note">* 원문 서술에서 자동 추정한 값</p></div>
+    <div class="panel"><h2>월별 추이</h2><div class="tw"><table>${monthly()}</table></div></div>`;
+}
+function monthly(){
+  const ms=[...new Set(DEALS.map(d=>d.first_dt.slice(0,7)))].sort().reverse();
+  const mx=Math.max(...ms.map(m=>DEALS.filter(d=>d.first_dt.startsWith(m)).reduce((s,d)=>s+(d.amount_eok||0),0)),1);
+  return `<tr><th>월</th><th class="n">건수</th><th>금액(억)</th><th class="n">신기술·VC</th><th class="n">YTM 중앙값</th><th class="n">리픽싱</th><th class="n">불리</th></tr>`+
+   ms.map(m=>{const a=DEALS.filter(d=>d.first_dt.startsWith(m)), s=stats(a);
+     return `<tr><td>${m}</td><td class="n">${s.n}</td><td><span class="hbar" style="width:${Math.round(s.amt/mx*160)}px"></span>${fmt(s.amt)}</td>
+       <td class="n">${pct(s.vc,s.n)}</td><td class="n">${fmt(s.ytm,2)}%</td><td class="n">${pct(s.refix,s.nonEB)}</td><td class="n">${pct(s.flagged,s.n)}</td></tr>`}).join('');
+}
+
+/* ── 목록 ── */
+const COLS = [
+  ['corp','회사'],['first_dt','공시일'],['market','시장'],['kind','종류'],['amount_eok','금액(억)','n'],
+  ['ytm','표면/만기(%)','n'],['tenor_y','만기','n'],['price','전환가(원)','n'],['refix_floor','리픽싱 하한','n'],
+  ['put_start_m','Put 시작','n'],['call_pct','Call','n'],['pay_date','납입일'],['investors','인수인'],['flags','불리 조건']
+];
+function renderList(){
+  const months=[...new Set(DEALS.map(d=>d.first_dt.slice(0,7)))].sort().reverse();
+  chips($('#f-kind'),['전체','CB','BW','EB'],LF.kind,v=>{LF.kind=v;renderList();});
+  chips($('#f-period'),['최근 30일','최근 90일','전체',...months],LF.period,v=>{LF.period=v;renderList();});
+  ['vc','flag','ours'].forEach(k=>$('#f-'+k).classList.toggle('on',LF[k]));
+  const q=LF.q.trim();
+  let a=DEALS.filter(d=>(LF.kind==='전체'||d.kind===LF.kind) && inPeriod(d,LF.period)
+    && (!LF.vc||d.investors.some(i=>VC_TYPES.has(i.type))) && (!LF.flag||flagsOf(d).length) && (!LF.ours||isOurs(d))
+    && (!q||d.corp.includes(q)||d.investors.some(i=>i.name.includes(q))));
+  const k=LF.sort; a.sort((x,y)=>{const u=x[k]??'', v=y[k]??''; return (u>v?1:u<v?-1:0)*LF.dir;});
+  $('#f-count').textContent=`${a.length}건 · ${fmt(a.reduce((s,d)=>s+(d.amount_eok||0),0))}억`;
+  const est=v=>`<span class="est">${v}</span>`;
+  $('#t-list').innerHTML=`<tr>${COLS.map(([k,l,c])=>`<th class="${c||''}" data-k="${k}">${l}${LF.sort===k?(LF.dir>0?' ▲':' ▼'):''}</th>`).join('')}</tr>`+
+    (a.length? a.map(d=>{const f=flagsOf(d), o=isOurs(d);
+      const inv=d.investors.slice(0,4).map(i=>`${i.name}${VC_TYPES.has(i.type)?` <span class="tag t-type">${i.type==='신기술조합'?'신기술':'VC'}</span>`:''}`).join(', ')
+        +(d.investors.length>4?` 외 ${d.investors.length-4}`:'');
+      return `<tr class="${o?'ours':''}">
+        <td><a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${d.rcept_no}" target="_blank" rel="noopener">${d.corp}</a>${d.corrections?` <span class="note">정정${d.corrections}</span>`:''}${o?' <span class="tag t-ours">우리</span>':''}</td>
+        <td>${d.first_dt.slice(2)}</td><td>${d.market}</td><td>${d.kind} ${d.round??''}회</td>
+        <td class="n">${fmt(d.amount_eok)}</td><td class="n">${d.coupon??'-'}/${d.ytm??'-'}</td>
+        <td class="n">${d.tenor_y>=30?'영구':d.tenor_y!=null?d.tenor_y+'년':'-'}</td><td class="n">${fmt(d.price)}</td>
+        <td class="n">${d.refix_floor!=null?d.refix_floor+'%':(d.kind==='EB'?'-':'없음')}</td>
+        <td class="n">${d.put===false?est('없음'):d.put_start_m!=null?est(d.put_start_m+'M'):'-'}</td>
+        <td class="n">${d.call===false?est('없음'):d.call_pct!=null?est(d.call_pct+'%'+(d.call_ytc!=null?' · YTC '+d.call_ytc+'%':'')):d.call?est('있음'):'-'}</td>
+        <td>${d.pay_date?d.pay_date.slice(2):'-'}</td>
+        <td class="inv">${inv||'<span class="note">미확인</span>'}</td>
+        <td>${f.map(x=>`<span class="tag t-warn">${x}</span>`).join('')}</td></tr>`}).join('')
+     : `<tr><td colspan="${COLS.length}" class="empty">조건에 맞는 건이 없습니다</td></tr>`);
+  $('#t-list').querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k; if(k==='investors'||k==='flags')return;
+    LF.dir = LF.sort===k ? -LF.dir : -1; LF.sort=k; renderList();});
+}
+
+/* ── 랭킹 ── */
+function renderRank(){
+  chips($('#r-period'),['2026 누적','최근 90일','최근 30일'],RF.period,v=>{RF.period=v;RF.sel=null;renderRank();});
+  chips($('#r-type'),['신기술·VC','신기술조합','VC펀드','PEF','자산운용','증권사','캐피탈','전체'],RF.type,v=>{RF.type=v;RF.sel=null;renderRank();});
+  const okType=t=>RF.type==='전체'||(RF.type==='신기술·VC'?VC_TYPES.has(t):t===RF.type);
+  const a=DEALS.filter(d=>inPeriod(d,RF.period)), G={};
+  for(const d of a){ const gs=new Set(d.investors.filter(i=>okType(i.type)).map(groupOf));
+    for(const g of gs){ (G[g] ||= {g,deals:[],corps:new Set()}); G[g].deals.push(d); G[g].corps.add(d.corp);} }
+  const rows=Object.values(G).sort((x,y)=>y.deals.length-x.deals.length||y.deals.reduce((s,d)=>s+d.amount_eok,0)-x.deals.reduce((s,d)=>s+d.amount_eok,0));
+  const mx=rows[0]?.deals.length||1;
+  $('#t-rank').innerHTML=`<tr><th>#</th><th>운용사·그룹</th><th>참여 건수</th><th class="n">참여 딜 총액(억)</th><th class="n">YTM 중앙값</th><th class="n">리픽싱 비중</th></tr>`+
+    (rows.length? rows.slice(0,40).map((r,i)=>{const s=stats(r.deals);
+      return `<tr data-g="${r.g}" style="cursor:pointer${RF.sel===r.g?';background:var(--accent-soft)':''}"><td>${i+1}</td><td>${r.g}</td>
+      <td><span class="hbar" style="width:${Math.round(r.deals.length/mx*90)}px"></span>${r.deals.length}</td>
+      <td class="n">${fmt(s.amt)}</td><td class="n">${fmt(s.ytm,2)}%</td><td class="n">${pct(s.refix,s.nonEB)}</td></tr>`}).join('')
+     : `<tr><td colspan="6" class="empty">해당 인수인이 없습니다</td></tr>`);
+  $('#t-rank').querySelectorAll('tr[data-g]').forEach(tr=>tr.onclick=()=>{RF.sel=tr.dataset.g;renderRank();});
+  const sel=RF.sel&&G[RF.sel];
+  if(!sel){ $('#co-title').textContent='함께 들어간 곳'; $('#co').innerHTML='<p class="note">왼쪽 표에서 운용사를 누르면 같이 인수한 곳과 참여 딜을 보여드립니다.</p>'; return; }
+  const C={}; for(const d of sel.deals){ const gs=new Set(d.investors.map(groupOf)); gs.delete(RF.sel); gs.forEach(g=>C[g]=(C[g]||0)+1); }
+  const co=Object.entries(C).sort((x,y)=>y[1]-x[1]).slice(0,12);
+  $('#co-title').textContent=`${RF.sel} — 함께 들어간 곳`;
+  $('#co').innerHTML=`<div class="tw"><table><tr><th>공동 인수인</th><th class="n">같이 들어간 횟수</th></tr>
+    ${co.map(([g,n])=>`<tr><td>${g}</td><td class="n">${n}</td></tr>`).join('')||'<tr><td colspan="2" class="note">단독 인수</td></tr>'}</table></div>
+    <h2 style="margin-top:14px">참여 딜</h2><div class="tw"><table><tr><th>회사</th><th>공시일</th><th>종류</th><th class="n">금액</th><th class="n">표면/만기</th><th class="n">리픽싱</th></tr>
+    ${sel.deals.sort((x,y)=>y.first_dt.localeCompare(x.first_dt)).map(d=>`<tr><td><a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${d.rcept_no}" target="_blank" rel="noopener">${d.corp}</a></td><td>${d.first_dt.slice(2)}</td><td>${d.kind}</td><td class="n">${fmt(d.amount_eok)}</td><td class="n">${d.coupon}/${d.ytm}</td><td class="n">${d.refix_floor!=null?d.refix_floor+'%':'없음'}</td></tr>`).join('')}</table></div>`;
+}
+
+/* ── 우리 회사 비교 ── */
+function renderOurs(){
+  if(!oursKw().length){ $('#ours').innerHTML=`<div class="panel empty">설정 탭에서 우리 회사 조합·펀드명 키워드를 입력하면 비교표가 나옵니다.</div>`; return; }
+  const mine=DEALS.filter(isOurs);
+  if(!mine.length){ $('#ours').innerHTML=`<div class="panel empty">키워드(${oursKw().join(', ')})와 맞는 인수인이 없습니다. 공시에 적힌 조합명 일부로 바꿔 보세요.</div>`; return; }
+  const m=stats(mine), all=stats(DEALS), vc=stats(DEALS.filter(d=>d.investors.some(i=>VC_TYPES.has(i.type))&&!isOurs(d)));
+  // higher is better for investor? true=높을수록 투자자 유리
+  const rows=[
+    ['딜 수', s=>s.n, null, v=>fmt(v)+'건'], ['건당 금액 중앙값', s=>s.medAmt, null, v=>fmt(v)+'억'],
+    ['만기이자율 중앙값', s=>s.ytm, true, v=>fmt(v,2)+'%'],
+    ['제로금리(0/0) 비중', s=>s.n?s.zero/s.n*100:null, false, v=>fmt(v)+'%'],
+    ['리픽싱 있음 비중', s=>s.nonEB?s.refix/s.nonEB*100:null, true, v=>fmt(v)+'%'],
+    ['리픽싱 하한 중앙값', s=>s.refixMed, false, v=>fmt(v,1)+'%'],
+    ['Call 비율 중앙값 *', s=>s.callMed, false, v=>fmt(v,1)+'%'],
+    ['Put 시작 중앙값 *', s=>s.putMed, false, v=>fmt(v)+'개월'],
+    ['불리 조건 있음', s=>s.n?s.flagged/s.n*100:null, false, v=>fmt(v)+'%'],
+  ];
+  const cls=(a,b,hi)=>hi==null||a==null||b==null||a===b?'':((a>b)===hi?'better':'worse');
+  $('#ours').innerHTML=`<div class="panel cmp"><h2>우리 회사 참여 딜 vs 시장 (2026 누적)</h2><div class="tw"><table>
+    <tr><th>항목</th><th class="n">우리 회사</th><th class="n">시장 전체</th><th class="n">다른 신기술·VC 참여 딜</th></tr>
+    ${rows.map(([k,f,hi,p])=>`<tr><td>${k}</td><td class="n ${cls(f(m),f(all),hi)}">${p(f(m))}</td><td class="n">${p(f(all))}</td><td class="n">${p(f(vc))}</td></tr>`).join('')}
+    </table></div><p class="note">초록 = 시장보다 투자자에게 유리, 주황 = 불리. * 자동 추정값</p></div>
+    <div class="panel"><h2>우리 회사 참여 딜</h2><div class="tw"><table>
+    <tr><th>회사</th><th>공시일</th><th>종류</th><th class="n">금액</th><th class="n">표면/만기</th><th class="n">리픽싱</th><th class="n">Call</th><th>같이 들어간 곳</th><th>불리 조건</th></tr>
+    ${mine.sort((x,y)=>y.first_dt.localeCompare(x.first_dt)).map(d=>`<tr><td><a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${d.rcept_no}" target="_blank" rel="noopener">${d.corp}</a></td><td>${d.first_dt.slice(2)}</td><td>${d.kind}</td>
+      <td class="n">${fmt(d.amount_eok)}</td><td class="n">${d.coupon}/${d.ytm}</td><td class="n">${d.refix_floor!=null?d.refix_floor+'%':'없음'}</td>
+      <td class="n est">${d.call_pct!=null?d.call_pct+'%':d.call===false?'없음':'-'}</td>
+      <td class="inv">${[...new Set(d.investors.filter(i=>!oursKw().some(k=>i.name.includes(k))).map(groupOf))].join(', ')}</td>
+      <td>${flagsOf(d).map(x=>`<span class="tag t-warn">${x}</span>`).join('')}</td></tr>`).join('')}</table></div></div>`;
+}
+
+/* ── 설정 ── */
+function bindSettings(){
+  const map={ours:'s-ours',call:'s-call',ytm:'s-ytm',put:'s-put',refix:'s-refix',prem:'s-prem',alias:'s-alias'};
+  for(const [k,id] of Object.entries(map)){ const el=$('#'+id);
+    if(el.type==='checkbox') el.checked=S[k]; else el.value=S[k];
+    el.oninput=el.onchange=()=>{ S[k]= el.type==='checkbox'?el.checked: el.type==='number'?Number(el.value):el.value;
+      store.set('settings',S); renderAll(); }; }
+}
+
+function renderAll(){ renderSum(); renderList(); renderRank(); renderOurs(); }
+
+$('#nav').onclick=e=>{ const t=e.target.dataset.t; if(!t) return;
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===t)); };
+['vc','flag','ours'].forEach(k=>$('#f-'+k).onclick=()=>{LF[k]=!LF[k];renderList();});
+$('#f-q').oninput=e=>{LF.q=e.target.value;renderList();};
+
+async function load(){
+  let data = window.__DATA__;
+  if(!data){ try{ data = await (await fetch('data/deals.json?'+Date.now())).json(); }
+    catch(e){ $('#meta').textContent='데이터가 아직 없습니다. GitHub Actions에서 첫 수집을 실행해 주세요.'; return; } }
+  UPDATED = data.updated||'';
+  DEALS = Object.values(data.deals).filter(d=>!d.withdrawn);
+  $('#meta').textContent=`유가·코스닥 CB·BW·EB 발행결정 · DART 자동 수집 · ${DEALS.length}건 · 갱신 ${UPDATED}`;
+  bindSettings(); renderAll();
+}
+load();
+</script>
+</body>
+</html>
