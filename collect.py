@@ -27,6 +27,7 @@ import zipfile
 from datetime import date, datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from pathlib import Path
+from difflib import SequenceMatcher
 from statistics import median
 
 import requests
@@ -36,7 +37,7 @@ KST = timezone(timedelta(hours=9))
 API = "https://opendart.fss.or.kr/api"
 ROOT = Path(__file__).parent
 DATA_FILE = ROOT / "data" / "deals.json"
-DATA_VERSION = 3  # 파서가 바뀌면 올림 → 다음 실행 때 처음부터 다시 수집
+DATA_VERSION = 4  # 파서가 바뀌면 올림 → 다음 실행 때 처음부터 다시 수집
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 
 KINDS = {
@@ -214,11 +215,57 @@ def fund_map_from_tables(tables) -> dict[str, tuple[str, str]]:
     return out
 
 
+def norm_key(n: str) -> str:
+    return re.sub(r"[\s\-·_()（）\[\]㈜]|주식회사", "", n)
+
+
+def clean_gp(n: str) -> str:
+    """'케이비증권㈜' → '케이비증권', '주식회사 엔엑스브이피' → '엔엑스브이피'."""
+    n = re.sub(r"\(.*?\)|（.*?）", "", n)
+    n = re.sub(r"㈜|\(주\)|주식회사|유한책임회사|유한회사", "", n)
+    return re.sub(r"\s+", " ", n).strip(" ,·")
+
+
+def gp_map_from_tables(tables) -> dict[str, list[str]]:
+    """'(1) 법인 또는 단체에 관한 기본정보' 표 → {조합명(정규화): [업무집행조합원, ...]}
+    행이 8칸이면 [명칭, 출자자수, 대표, 지분, 업무집행자, 지분, 최대주주, 지분],
+    6칸이면 위 조합의 공동 업무집행자 줄(명칭·출자자수 칸이 합쳐져 빠짐)."""
+    out: dict[str, list[str]] = {}
+    for rows in tables:
+        if not any("업무집행" in "".join(r).replace(" ", "") for r in rows[:2]):
+            continue
+        cur = None
+        for r in rows:
+            joined = "".join(r).replace(" ", "")
+            if "명칭" in joined or joined.startswith("성명"):
+                continue
+            if len(r) >= 8:
+                cur, gp = norm_key(r[0]), r[4]
+            elif len(r) == 6 and cur:
+                gp = r[2]
+            else:
+                continue
+            gp = clean_gp(gp)
+            if cur and gp and gp != "-" and gp not in out.setdefault(cur, []):
+                out[cur].append(gp)
+    return out
+
+
+def match_key(name: str, gpmap: dict) -> str | None:
+    """표마다 띄어쓰기·오타가 조금씩 달라서 정확히 같지 않아도 매우 비슷하면 같은 조합으로 본다."""
+    k = norm_key(name)
+    if k in gpmap:
+        return k
+    best = max(gpmap, key=lambda g: SequenceMatcher(None, k, g).ratio(), default=None)
+    return best if best and SequenceMatcher(None, k, best).ratio() >= 0.9 else None
+
+
 TRUST = re.compile(r"\(?\s*(?:본건\s*)?펀드\s*([\d,\s및]+)\s*의?\s*신탁업자[^)]*\)?")
 
 
-def resolve_investors(names: list[str], fmap: dict) -> list[dict]:
-    """신탁업자 명의 인수인을 실제 펀드·운용사로 바꾼다."""
+def resolve_investors(names: list[str], fmap: dict, gpmap: dict | None = None) -> list[dict]:
+    """신탁업자 명의 인수인을 실제 펀드·운용사로 바꾸고, 조합·펀드마다 운용사(gps)를 붙인다."""
+    gpmap = gpmap or {}
     out = []
     for n in names:
         m = TRUST.search(n)
@@ -228,15 +275,29 @@ def resolve_investors(names: list[str], fmap: dict) -> list[dict]:
             hits = [fmap[k] for k in nums if k in fmap]
             if hits:
                 for fund, mgr in hits:
-                    out.append({"name": fund, "type": investor_type(fund + " " + mgr), "group": investor_group(mgr or fund),
-                                "via": trustee})
+                    gps = [clean_gp(mgr)] if mgr else [investor_group(fund)]
+                    out.append({"name": fund, "type": investor_type(fund + " " + mgr), "group": " · ".join(gps),
+                                "gps": gps, "gp_src": "펀드표" if mgr else "이름", "via": trustee})
                 continue
-            out.append({"name": n, "type": "자산운용", "group": "신탁(운용사 미확인)", "via": trustee})
+            out.append({"name": n, "type": "자산운용", "group": "신탁(운용사 미확인)", "gps": ["신탁(운용사 미확인)"],
+                        "gp_src": "없음", "via": trustee})
             continue
         if "신탁업자" in n or "특정금전신탁" in n:
-            out.append({"name": n, "type": "자산운용", "group": "신탁(운용사 미확인)", "via": n.split("(")[0].strip()})
+            out.append({"name": n, "type": "자산운용", "group": "신탁(운용사 미확인)", "gps": ["신탁(운용사 미확인)"],
+                        "gp_src": "없음", "via": n.split("(")[0].strip()})
             continue
-        out.append({"name": n, "type": investor_type(n), "group": investor_group(n)})
+        t = investor_type(n)
+        m = re.search(r"\(\s*업무집행(?:사원|조합원)\s*[:：]?\s*([^)]+)\)", n)
+        base = re.sub(r"\(\s*업무집행.*?\)", "", n).strip()
+        if m:                                   # '○○사모투자 합자회사(업무집행사원 : △△)'
+            gps, src = [clean_gp(m.group(1))], "공시"
+        elif (k := match_key(base, gpmap)):     # 기본정보 표의 업무집행조합원
+            gps, src = gpmap[k], "공시"
+        elif t in ("신기술조합", "VC펀드", "PEF", "자산운용"):
+            gps, src = [investor_group(base)], "이름"   # 표가 없으면 이름 앞머리로 추정
+        else:                                   # 증권사·캐피탈·법인·개인은 본인이 곧 운용 주체
+            gps, src = [clean_gp(base)], "본인"
+        out.append({"name": base, "type": t, "group": " · ".join(gps), "gps": gps, "gp_src": src})
     # 같은 펀드가 두 번 나오면 하나로
     seen, uniq = set(), []
     for i in out:
@@ -388,7 +449,7 @@ def build_deal(dart: Dart, rep: dict, kind: str) -> dict | None:
 
     html = dart.document_text(rep["rcept_no"])
     text, tables = doc_tables(html) if html else ("", [])
-    invs = resolve_investors(investors_from_tables(tables), fund_map_from_tables(tables))
+    invs = resolve_investors(investors_from_tables(tables), fund_map_from_tables(tables), gp_map_from_tables(tables))
     opts = parse_options(text, pay)
 
     refix_floor = round(floor / price * 100, 1) if floor and price and floor < price else None

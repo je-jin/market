@@ -96,8 +96,8 @@
     <div class="bar" id="r-period"></div>
     <div class="bar" id="r-type"></div>
     <div class="grid2">
-      <div class="panel"><h2>운용사·그룹별</h2><div class="tw"><table id="t-rank"></table></div>
-        <p class="note">펀드명 앞머리로 묶었습니다. 이름이 다르게 묶이면 설정에서 별칭을 추가하세요.</p></div>
+      <div class="panel"><h2>운용사별</h2><div class="tw"><table id="t-rank"></table></div>
+        <p class="note">공시의 업무집행조합원(업무집행사원)·집합투자업자 기준으로 묶었습니다. 공동 GP 조합은 양쪽에 1건씩 셉니다. 공시에 정보가 없으면 조합명 앞머리로 추정합니다. 같은 회사가 다른 이름으로 나오면(예: 엔에이치투자증권 / NH투자증권) 설정에서 별칭으로 합치세요.</p></div>
       <div class="panel"><h2 id="co-title">함께 들어간 곳</h2><div id="co"></div></div>
     </div>
   </section>
@@ -119,7 +119,7 @@
     </div>
     <div class="panel">
       <h2>인수인 묶음 별칭</h2>
-      <p class="note">한 줄에 하나씩 <b>표시이름: 키워드1, 키워드2</b> 형식. 예) 한국투자: 한국투자, 한투</p>
+      <p class="note">한 줄에 하나씩 <b>표시이름: 키워드1, 키워드2</b> 형식. 운용사 이름에 키워드가 들어 있으면 표시이름으로 합칩니다. 예) NH투자증권: 엔에이치투자증권, NH투자증권</p>
       <textarea id="s-alias" rows="5" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:7px;padding:8px;background:var(--card);color:var(--ink)"></textarea>
     </div>
   </section>
@@ -150,7 +150,9 @@ function toggleMine(key){ const d=DEALS.find(x=>x.key===key); if(!d) return;
   store.set('mine',[...MINE]); store.set('notmine',[...NOT_MINE]); renderAll(); }
 const aliasMap = () => S.alias.split('\n').map(l=>l.split(':')).filter(p=>p.length==2)
   .map(([a,b])=>[a.trim(), b.split(',').map(s=>s.trim()).filter(Boolean)]);
-const groupOf = i => { for(const [a,ks] of aliasMap()) if(ks.some(k=>i.name.includes(k))) return a; return i.group; };
+const aliasOf = g => { for(const [a,ks] of aliasMap()) if(ks.some(k=>g.includes(k))) return a; return g; };
+// 인수인 한 곳의 운용사 목록 (공동 GP면 여러 곳). 예전 데이터는 group 하나
+const groupsOf = i => [...new Set((i.gps && i.gps.length ? i.gps : [i.group]).map(aliasOf))];
 
 function flagsOf(d){
   const f=[];
@@ -246,7 +248,7 @@ function renderList(){
   const est=v=>`<span class="est">${v}</span>`;
   $('#t-list').innerHTML=`<tr>${COLS.map(([k,l,c])=>`<th class="${c||''}" data-k="${k}">${l}${LF.sort===k?(LF.dir>0?' ▲':' ▼'):''}</th>`).join('')}</tr>`+
     (a.length? a.map(d=>{const f=flagsOf(d), o=isOurs(d);
-      const inv=d.investors.slice(0,4).map(i=>`${i.name}${VC_TYPES.has(i.type)?` <span class="tag t-type">${i.type==='신기술조합'?'신기술':'VC'}</span>`:''}`).join(', ')
+      const inv=d.investors.slice(0,4).map(i=>`<span title="운용: ${groupsOf(i).join(' · ')}${i.via?' / 명의: '+i.via:''}">${i.name}</span>${VC_TYPES.has(i.type)?` <span class="tag t-type">${i.type==='신기술조합'?'신기술':'VC'}</span>`:''}`).join(', ')
         +(d.investors.length>4?` 외 ${d.investors.length-4}`:'');
       return `<tr class="${o?'ours':''}">
         <td><button class="star ${o?'on':''}" data-key="${d.key}" title="우리 딜로 표시/해제">${o?'★':'☆'}</button></td>
@@ -272,23 +274,24 @@ function renderRank(){
   chips($('#r-type'),['신기술·VC','신기술조합','VC펀드','PEF','자산운용','증권사','캐피탈','전체'],RF.type,v=>{RF.type=v;RF.sel=null;renderRank();});
   const okType=t=>RF.type==='전체'||(RF.type==='신기술·VC'?VC_TYPES.has(t):t===RF.type);
   const a=DEALS.filter(d=>inPeriod(d,RF.period)), G={};
-  for(const d of a){ const gs=new Set(d.investors.filter(i=>okType(i.type)).map(groupOf));
-    for(const g of gs){ (G[g] ||= {g,deals:[],corps:new Set()}); G[g].deals.push(d); G[g].corps.add(d.corp);} }
+  for(const d of a){ const gs=new Set(d.investors.filter(i=>okType(i.type)).flatMap(groupsOf));
+    for(const g of gs){ (G[g] ||= {g,deals:[],funds:new Set()}); G[g].deals.push(d);
+      d.investors.filter(i=>okType(i.type)&&groupsOf(i).includes(g)).forEach(i=>G[g].funds.add(i.name)); } }
   const rows=Object.values(G).sort((x,y)=>y.deals.length-x.deals.length||y.deals.reduce((s,d)=>s+d.amount_eok,0)-x.deals.reduce((s,d)=>s+d.amount_eok,0));
   const mx=rows[0]?.deals.length||1;
-  $('#t-rank').innerHTML=`<tr><th>#</th><th>운용사·그룹</th><th>참여 건수</th><th class="n">참여 딜 총액(억)</th><th class="n">YTM 중앙값</th><th class="n">리픽싱 비중</th></tr>`+
+  $('#t-rank').innerHTML=`<tr><th>#</th><th>운용사</th><th>참여 건수</th><th class="n">사용한 조합·펀드</th><th class="n">참여 딜 총액(억)</th><th class="n">YTM 중앙값</th><th class="n">리픽싱 비중</th></tr>`+
     (rows.length? rows.slice(0,40).map((r,i)=>{const s=stats(r.deals);
       return `<tr data-g="${r.g}" style="cursor:pointer${RF.sel===r.g?';background:var(--accent-soft)':''}"><td>${i+1}</td><td>${r.g}</td>
       <td><span class="hbar" style="width:${Math.round(r.deals.length/mx*90)}px"></span>${r.deals.length}</td>
-      <td class="n">${fmt(s.amt)}</td><td class="n">${fmt(s.ytm,2)}%</td><td class="n">${pct(s.refix,s.nonEB)}</td></tr>`}).join('')
-     : `<tr><td colspan="6" class="empty">해당 인수인이 없습니다</td></tr>`);
+      <td class="n">${r.funds.size}</td><td class="n">${fmt(s.amt)}</td><td class="n">${fmt(s.ytm,2)}%</td><td class="n">${pct(s.refix,s.nonEB)}</td></tr>`}).join('')
+     : `<tr><td colspan="7" class="empty">해당 인수인이 없습니다</td></tr>`);
   $('#t-rank').querySelectorAll('tr[data-g]').forEach(tr=>tr.onclick=()=>{RF.sel=tr.dataset.g;renderRank();});
   const sel=RF.sel&&G[RF.sel];
   if(!sel){ $('#co-title').textContent='함께 들어간 곳'; $('#co').innerHTML='<p class="note">왼쪽 표에서 운용사를 누르면 같이 인수한 곳과 참여 딜을 보여드립니다.</p>'; return; }
-  const C={}; for(const d of sel.deals){ const gs=new Set(d.investors.map(groupOf)); gs.delete(RF.sel); gs.forEach(g=>C[g]=(C[g]||0)+1); }
+  const C={}; for(const d of sel.deals){ const gs=new Set(d.investors.flatMap(groupsOf)); gs.delete(RF.sel); gs.forEach(g=>C[g]=(C[g]||0)+1); }
   const co=Object.entries(C).sort((x,y)=>y[1]-x[1]).slice(0,12);
   $('#co-title').textContent=`${RF.sel} — 함께 들어간 곳`;
-  $('#co').innerHTML=`<div class="tw"><table><tr><th>공동 인수인</th><th class="n">같이 들어간 횟수</th></tr>
+  $('#co').innerHTML=`<p class="note">사용한 조합·펀드: ${[...sel.funds].join(', ')}</p><div class="tw"><table><tr><th>공동 인수 운용사</th><th class="n">같이 들어간 횟수</th></tr>
     ${co.map(([g,n])=>`<tr><td>${g}</td><td class="n">${n}</td></tr>`).join('')||'<tr><td colspan="2" class="note">단독 인수</td></tr>'}</table></div>
     <h2 style="margin-top:14px">참여 딜</h2><div class="tw"><table><tr><th>회사</th><th>공시일</th><th>종류</th><th class="n">금액</th><th class="n">표면/만기</th><th class="n">리픽싱</th></tr>
     ${sel.deals.sort((x,y)=>y.first_dt.localeCompare(x.first_dt)).map(d=>`<tr><td><a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${d.rcept_no}" target="_blank" rel="noopener">${d.corp}</a></td><td>${d.first_dt.slice(2)}</td><td>${d.kind}</td><td class="n">${fmt(d.amount_eok)}</td><td class="n">${d.coupon}/${d.ytm}</td><td class="n">${d.refix_floor!=null?d.refix_floor+'%':'없음'}</td></tr>`).join('')}</table></div>`;
@@ -321,7 +324,7 @@ function renderOurs(){
     ${mine.sort((x,y)=>y.first_dt.localeCompare(x.first_dt)).map(d=>`<tr><td><a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${d.rcept_no}" target="_blank" rel="noopener">${d.corp}</a></td><td>${d.first_dt.slice(2)}</td><td>${d.kind}</td>
       <td class="n">${fmt(d.amount_eok)}</td><td class="n">${d.coupon}/${d.ytm}</td><td class="n">${d.refix_floor!=null?d.refix_floor+'%':'없음'}</td>
       <td class="n est">${d.call_pct!=null?d.call_pct+'%':d.call===false?'없음':'-'}</td>
-      <td class="inv">${[...new Set(d.investors.filter(i=>!oursKw().some(k=>i.name.includes(k))).map(groupOf))].join(', ')}</td>
+      <td class="inv">${[...new Set(d.investors.filter(i=>!oursKw().some(k=>i.name.includes(k))).flatMap(groupsOf))].join(', ')}</td>
       <td>${flagsOf(d).map(x=>`<span class="tag t-warn">${x}</span>`).join('')}</td></tr>`).join('')}</table></div></div>`;
 }
 
