@@ -55,19 +55,21 @@ class Dart:
         self.calls = 0
 
     def get(self, path: str, **params):
+        """DART가 느리거나 끊겨도 최대 6번, 점점 길게 기다리며 다시 시도한다."""
         params["crtfc_key"] = self.key
-        for attempt in range(3):
+        waits = [5, 15, 30, 60, 120]
+        for attempt in range(len(waits) + 1):
             try:
-                r = self.s.get(f"{API}/{path}", params=params, timeout=30)
+                r = self.s.get(f"{API}/{path}", params=params, timeout=60)
                 self.calls += 1
                 time.sleep(0.15)
                 r.raise_for_status()
                 return r
             except requests.RequestException as e:
-                if attempt == 2:
+                if attempt == len(waits):
                     raise
-                print(f"  재시도 {path}: {e}")
-                time.sleep(2 + attempt * 3)
+                print(f"  재시도 {attempt + 1}/{len(waits)} {path}: {type(e).__name__} → {waits[attempt]}초 대기")
+                time.sleep(waits[attempt])
 
     def json(self, path: str, **params) -> dict:
         d = self.get(path, **params).json()
@@ -76,21 +78,21 @@ class Dart:
             raise RuntimeError(f"DART {path} 오류 {st}: {d.get('message')}")
         return d
 
-    def list_reports(self, bgn: date, end: date) -> list[dict]:
-        """주요사항보고서 목록 (3개월 단위로 끊어 조회)."""
-        out, cur = [], bgn
+    def list_chunks(self, bgn: date, end: date):
+        """주요사항보고서(B001) 목록을 3개월 단위로 끊어서 차례로 돌려준다."""
+        cur = bgn
         while cur <= end:
             to = min(end, cur + timedelta(days=89))
-            page = 1
+            out, page = [], 1
             while True:
                 d = self.json("list.json", bgn_de=f"{cur:%Y%m%d}", end_de=f"{to:%Y%m%d}",
-                              pblntf_ty="B", page_no=page, page_count=100)
+                              pblntf_detail_ty="B001", page_no=page, page_count=100)
                 out += d.get("list", [])
                 if page >= int(d.get("total_page") or 1):
                     break
                 page += 1
+            yield cur, to, out
             cur = to + timedelta(days=1)
-        return out
 
     def decision(self, api: str, corp_code: str, day: str) -> list[dict]:
         return self.json(f"{api}.json", corp_code=corp_code, bgn_de=day, end_de=day).get("list", [])
@@ -478,6 +480,13 @@ def send_mail(new: list[dict], all_deals: list[dict]):
 
 
 # ───────────────────────── 메인 ─────────────────────────
+def save(store: dict, deals: dict, seen: set, backfill_done: bool):
+    store.update({"version": DATA_VERSION, "updated": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+                  "backfill_done": backfill_done, "deals": deals, "seen": sorted(seen)})
+    DATA_FILE.parent.mkdir(exist_ok=True)
+    DATA_FILE.write_text(json.dumps(store, ensure_ascii=False, indent=0), encoding="utf-8")
+
+
 def main():
     key = os.getenv("DART_API_KEY")
     if not key:
@@ -487,46 +496,48 @@ def main():
     store = json.loads(DATA_FILE.read_text(encoding="utf-8")) if DATA_FILE.exists() else {}
     if store.get("version") != DATA_VERSION:
         print("데이터 형식이 바뀌어 처음부터 다시 수집합니다")
-        store = {"deals": {}, "seen": []}
-    deals: dict = store["deals"]
-    seen = set(store["seen"])
+        store = {}
+    deals: dict = store.get("deals", {})
+    seen = set(store.get("seen", []))
+    backfill_done = store.get("backfill_done", False)
 
     start = date.fromisoformat(CONFIG["start_date"])
     today = datetime.now(KST).date()
-    bgn = start if not seen else max(start, today - timedelta(days=CONFIG.get("lookback_days", 10)))
-    print(f"목록 조회 {bgn} ~ {today}")
+    # 처음 수집(또는 중간에 끊긴 수집)은 시작일부터, 그 뒤로는 최근 며칠만
+    bgn = max(start, today - timedelta(days=CONFIG.get("lookback_days", 10))) if backfill_done else start
+    print(f"목록 조회 {bgn} ~ {today} ({'일일 갱신' if backfill_done else '전체 수집'})")
 
-    reports = [r for r in dart.list_reports(bgn, today)
-               if r.get("corp_cls") in MARKETS and kind_of(r["report_nm"])]
-    reports.sort(key=lambda r: r["rcept_no"])
-    print(f"발행결정 공시 {len(reports)}건, 신규 {sum(r['rcept_no'] not in seen for r in reports)}건")
-
-    new_keys = []
-    for rep in reports:
-        if rep["rcept_no"] in seen:
-            continue
-        kind = kind_of(rep["report_nm"])
-        try:
-            d = build_deal(dart, rep, kind)
-        except Exception as e:  # 한 건 실패가 전체를 멈추지 않도록
-            print(f"  실패 {rep['corp_name']} {rep['rcept_no']}: {e}")
-            continue
-        seen.add(rep["rcept_no"])
-        if not d:
-            continue
-        old = deals.get(d["key"])
-        if old:  # 정정공시 → 최신 조건으로 덮되 최초 공시일·정정횟수 유지
-            d["first_dt"] = old["first_dt"]
-            d["corrections"] = old.get("corrections", 0) + 1
-        elif bgn != start:
-            new_keys.append(d["key"])
-        deals[d["key"]] = d
-        print(f"  {'정정' if old else '신규'} {d['corp']} {kind} {d['round']}회 {d['amount_eok']}억 인수인 {len(d['investors'])}")
-
-    store = {"version": DATA_VERSION, "updated": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "deals": deals, "seen": sorted(seen)}
-    DATA_FILE.parent.mkdir(exist_ok=True)
-    DATA_FILE.write_text(json.dumps(store, ensure_ascii=False, indent=0), encoding="utf-8")
-    print(f"저장 {len(deals)}건, DART 호출 {dart.calls}회")
+    new_keys, failed = [], 0
+    try:
+        for cur, to, chunk in dart.list_chunks(bgn, today):
+            reports = sorted((r for r in chunk if r.get("corp_cls") in MARKETS and kind_of(r["report_nm"])),
+                             key=lambda r: r["rcept_no"])
+            todo = [r for r in reports if r["rcept_no"] not in seen]
+            print(f"[{cur} ~ {to}] 발행결정 {len(reports)}건, 새로 처리 {len(todo)}건")
+            for rep in todo:
+                kind = kind_of(rep["report_nm"])
+                try:
+                    d = build_deal(dart, rep, kind)
+                except Exception as e:  # 한 건 실패가 전체를 멈추지 않도록 (다음 실행 때 다시 시도)
+                    failed += 1
+                    print(f"  실패 {rep['corp_name']} {rep['rcept_no']}: {type(e).__name__} {e}")
+                    continue
+                seen.add(rep["rcept_no"])
+                if not d:
+                    continue
+                old = deals.get(d["key"])
+                if old:  # 정정공시 → 최신 조건으로 덮되 최초 공시일·정정횟수 유지
+                    d["first_dt"] = old["first_dt"]
+                    d["corrections"] = old.get("corrections", 0) + 1
+                elif backfill_done:
+                    new_keys.append(d["key"])
+                deals[d["key"]] = d
+                print(f"  {'정정' if old else '신규'} {d['corp']} {kind} {d['round']}회 {d['amount_eok']}억 인수인 {len(d['investors'])}")
+            save(store, deals, seen, backfill_done)  # 구간마다 저장 → 중간에 끊겨도 여기까지는 남는다
+        backfill_done = True
+    finally:
+        save(store, deals, seen, backfill_done)
+        print(f"저장 {len(deals)}건, 실패 {failed}건, DART 호출 {dart.calls}회, 전체 수집 {'완료' if backfill_done else '미완료(다음 실행 때 이어서)'}")
 
     send_mail([deals[k] for k in new_keys], list(deals.values()))
 

@@ -60,6 +60,8 @@
   label.row{display:flex;gap:10px;align-items:center;margin:8px 0}
   label.row span{min-width:190px}
   .empty{padding:30px;text-align:center;color:var(--sub)}
+  button.star{border:0;background:none;cursor:pointer;font-size:16px;color:var(--line);padding:0 2px;line-height:1}
+  button.star.on{color:var(--ours)} button.star:hover{color:var(--ours)}
 </style>
 </head>
 <body>
@@ -88,7 +90,7 @@
       <span class="note" id="f-count"></span>
     </div>
     <div class="tw"><table id="t-list"></table></div>
-    <p class="note">회색 기울임 = 원문 서술에서 자동 추정한 값(틀릴 수 있음). 회사명을 누르면 DART 원문. 머리글을 누르면 정렬.</p>
+    <p class="note">☆를 누르면 우리 딜로 표시(키워드로 잡힌 건은 ★를 눌러 해제). 증권사가 먼저 인수한 뒤 넘겨받은 딜은 공시에 조합명이 없어 직접 표시해야 합니다. 회색 기울임 = 원문 서술에서 자동 추정한 값. 회사명을 누르면 DART 원문.</p>
   </section>
   <section id="rank">
     <div class="bar" id="r-period"></div>
@@ -104,7 +106,8 @@
     <div class="panel">
       <h2>우리 회사</h2>
       <label class="row"><span>조합·펀드명 키워드 (쉼표 구분)</span><input type="text" id="s-ours" size="40" placeholder="예: OO 신기술, OO벤처"></label>
-      <p class="note">이 키워드는 이 브라우저에만 저장되고 페이지·저장소에는 올라가지 않습니다.</p>
+      <p class="note">이 키워드와 직접 표시한 딜(★)은 이 브라우저에만 저장되고 페이지·저장소에는 올라가지 않습니다.</p>
+      <p class="note" id="s-mine"></p>
     </div>
     <div class="panel">
       <h2>불리 조건 기준</h2>
@@ -132,13 +135,19 @@ const store = { get(k,d){ try{const v=localStorage.getItem('mezz.'+k); return v=
                 set(k,v){ try{localStorage.setItem('mezz.'+k,JSON.stringify(v));}catch(e){} } };
 
 let S = Object.assign({ ours:'', call:50, ytm:2, put:24, refix:true, prem:false, alias:'' }, store.get('settings',{}));
+let MINE = new Set(store.get('mine', []));   // 직접 표시한 우리 딜 (key)
+let NOT_MINE = new Set(store.get('notmine', []));   // 키워드로 잡혔지만 우리 딜이 아닌 것
 let DEALS = [], UPDATED = '';
 let LF = { kind:'전체', period:'최근 90일', vc:false, flag:false, ours:false, q:'', sort:'first_dt', dir:-1 };
 let RF = { period:'2026 누적', type:'신기술·VC', sel:null };
 
 const VC_TYPES = new Set(['신기술조합','VC펀드']);
 const oursKw = () => S.ours.split(',').map(s=>s.trim()).filter(Boolean);
-const isOurs = d => { const k=oursKw(); return k.length && d.investors.some(i=>k.some(w=>i.name.includes(w))); };
+const kwOurs = d => { const k=oursKw(); return k.length>0 && d.investors.some(i=>k.some(w=>i.name.includes(w))); };
+const isOurs = d => MINE.has(d.key) || (kwOurs(d) && !NOT_MINE.has(d.key));
+function toggleMine(key){ const d=DEALS.find(x=>x.key===key); if(!d) return;
+  if(isOurs(d)){ MINE.delete(key); if(kwOurs(d)) NOT_MINE.add(key); } else { NOT_MINE.delete(key); if(!kwOurs(d)) MINE.add(key); }
+  store.set('mine',[...MINE]); store.set('notmine',[...NOT_MINE]); renderAll(); }
 const aliasMap = () => S.alias.split('\n').map(l=>l.split(':')).filter(p=>p.length==2)
   .map(([a,b])=>[a.trim(), b.split(',').map(s=>s.trim()).filter(Boolean)]);
 const groupOf = i => { for(const [a,ks] of aliasMap()) if(ks.some(k=>i.name.includes(k))) return a; return i.group; };
@@ -200,7 +209,7 @@ function renderSum(){
       <div class="card"><div class="k">최근 30일 발행</div><div class="v">${fmt(c.n)}건</div><div class="s">${fmt(c.amt)}억</div></div>
       <div class="card"><div class="k">최근 30일 신기술·VC 참여</div><div class="v">${fmt(c.vc)}건</div><div class="s">${pct(c.vc,c.n)}</div></div>
       <div class="card"><div class="k">최근 30일 불리 조건</div><div class="v">${fmt(c.flagged)}건</div><div class="s">설정 기준</div></div>
-      <div class="card"><div class="k">우리 회사 참여 (누적)</div><div class="v">${oursKw().length?fmt(st[0].ours)+'건':'—'}</div><div class="s">${oursKw().length?'':'설정에서 키워드 입력'}</div></div>
+      <div class="card"><div class="k">우리 회사 참여 (누적)</div><div class="v">${(oursKw().length||MINE.size)?fmt(st[0].ours)+'건':'—'}</div><div class="s">${(oursKw().length||MINE.size)?'':'설정에서 키워드 입력'}</div></div>
     </div>
     <div class="panel"><h2>한눈에</h2><div class="tw"><table>
       <tr><th>구분</th>${P.map(p=>`<th class="n">${p}</th>`).join('')}</tr>
@@ -219,7 +228,7 @@ function monthly(){
 
 /* ── 목록 ── */
 const COLS = [
-  ['corp','회사'],['first_dt','공시일'],['market','시장'],['kind','종류'],['amount_eok','금액(억)','n'],
+  ['star','★'],['corp','회사'],['first_dt','공시일'],['market','시장'],['kind','종류'],['amount_eok','금액(억)','n'],
   ['ytm','표면/만기(%)','n'],['tenor_y','만기','n'],['price','전환가(원)','n'],['refix_floor','리픽싱 하한','n'],
   ['put_start_m','Put 시작','n'],['call_pct','Call','n'],['pay_date','납입일'],['investors','인수인'],['flags','불리 조건']
 ];
@@ -240,6 +249,7 @@ function renderList(){
       const inv=d.investors.slice(0,4).map(i=>`${i.name}${VC_TYPES.has(i.type)?` <span class="tag t-type">${i.type==='신기술조합'?'신기술':'VC'}</span>`:''}`).join(', ')
         +(d.investors.length>4?` 외 ${d.investors.length-4}`:'');
       return `<tr class="${o?'ours':''}">
+        <td><button class="star ${o?'on':''}" data-key="${d.key}" title="우리 딜로 표시/해제">${o?'★':'☆'}</button></td>
         <td><a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${d.rcept_no}" target="_blank" rel="noopener">${d.corp}</a>${d.corrections?` <span class="note">정정${d.corrections}</span>`:''}${o?' <span class="tag t-ours">우리</span>':''}</td>
         <td>${d.first_dt.slice(2)}</td><td>${d.market}</td><td>${d.kind} ${d.round??''}회</td>
         <td class="n">${fmt(d.amount_eok)}</td><td class="n">${d.coupon??'-'}/${d.ytm??'-'}</td>
@@ -251,7 +261,8 @@ function renderList(){
         <td class="inv">${inv||'<span class="note">미확인</span>'}</td>
         <td>${f.map(x=>`<span class="tag t-warn">${x}</span>`).join('')}</td></tr>`}).join('')
      : `<tr><td colspan="${COLS.length}" class="empty">조건에 맞는 건이 없습니다</td></tr>`);
-  $('#t-list').querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k; if(k==='investors'||k==='flags')return;
+  $('#t-list').querySelectorAll('button.star').forEach(b=>b.onclick=()=>toggleMine(b.dataset.key));
+  $('#t-list').querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k; if(k==='investors'||k==='flags'||k==='star')return;
     LF.dir = LF.sort===k ? -LF.dir : -1; LF.sort=k; renderList();});
 }
 
@@ -285,9 +296,9 @@ function renderRank(){
 
 /* ── 우리 회사 비교 ── */
 function renderOurs(){
-  if(!oursKw().length){ $('#ours').innerHTML=`<div class="panel empty">설정 탭에서 우리 회사 조합·펀드명 키워드를 입력하면 비교표가 나옵니다.</div>`; return; }
+  if(!oursKw().length && !MINE.size){ $('#ours').innerHTML=`<div class="panel empty">설정 탭에서 우리 회사 조합·펀드명 키워드를 입력하거나, 발행 목록에서 ☆를 눌러 우리 딜을 표시하면 비교표가 나옵니다.</div>`; return; }
   const mine=DEALS.filter(isOurs);
-  if(!mine.length){ $('#ours').innerHTML=`<div class="panel empty">키워드(${oursKw().join(', ')})와 맞는 인수인이 없습니다. 공시에 적힌 조합명 일부로 바꿔 보세요.</div>`; return; }
+  if(!mine.length){ $('#ours').innerHTML=`<div class="panel empty">키워드(${oursKw().join(', ')})와 맞는 인수인이 없습니다. 공시에 적힌 조합명 일부로 바꾸거나, 발행 목록에서 ☆를 눌러 직접 표시하세요.</div>`; return; }
   const m=stats(mine), all=stats(DEALS), vc=stats(DEALS.filter(d=>d.investors.some(i=>VC_TYPES.has(i.type))&&!isOurs(d)));
   // higher is better for investor? true=높을수록 투자자 유리
   const rows=[
@@ -323,7 +334,8 @@ function bindSettings(){
       store.set('settings',S); renderAll(); }; }
 }
 
-function renderAll(){ renderSum(); renderList(); renderRank(); renderOurs(); }
+function renderAll(){ renderSum(); renderList(); renderRank(); renderOurs();
+  const sm=$('#s-mine'); if(sm) sm.textContent = `직접 표시한 딜 ${MINE.size}건 · 키워드에서 제외한 딜 ${NOT_MINE.size}건`; }
 
 $('#nav').onclick=e=>{ const t=e.target.dataset.t; if(!t) return;
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
